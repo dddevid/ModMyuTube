@@ -1,4 +1,4 @@
-import os, subprocess, requests, shutil, logging
+import os, subprocess, requests, shutil, logging, sys, platform
 
 from pathlib import Path
 import tkinter as tk
@@ -40,6 +40,93 @@ logger = logging.getLogger("modmyutube")
 logger.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 logger.propagate = False
+
+def check_os():
+    system = platform.system()
+    if system not in ["Linux", "Darwin"]:
+        logger.error(f"Unsupported OS: {system}")
+        logger.error("This script only works on Linux and macOS")
+        sys.exit(1)
+    return system
+
+def check_command(cmd):
+    try:
+        subprocess.run([cmd, "--version"], capture_output=True, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def install_dependencies():
+    system = check_os()
+    
+    missing = []
+    if not check_command("git"):
+        missing.append("git")
+    if not check_command("cyan"):
+        missing.append("cyan")
+    
+    if not missing:
+        logger.debug("All dependencies are already installed")
+        return
+    
+    logger.info(f"Installing missing dependencies: {', '.join(missing)}")
+    
+    if "git" in missing:
+        logger.debug("Installing git...")
+        if system == "Darwin":
+            if not check_command("brew"):
+                logger.error("Homebrew not found. Install it from https://brew.sh")
+                sys.exit(1)
+            subprocess.run(["brew", "install", "git"], check=True)
+        elif system == "Linux":
+            try:
+                subprocess.run(["sudo", "apt-get", "update"], check=True)
+                subprocess.run(["sudo", "apt-get", "install", "-y", "git"], check=True)
+            except subprocess.CalledProcessError:
+                try:
+                    subprocess.run(["sudo", "yum", "install", "-y", "git"], check=True)
+                except subprocess.CalledProcessError:
+                    logger.error("Unable to install git automatically")
+                    sys.exit(1)
+    
+    if "cyan" in missing:
+        logger.debug("Installing cyan (pyzule-rw)...")
+        
+        if check_command("pipx"):
+            try:
+                subprocess.run([
+                    "pipx", "install", "--force",
+                    "https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip"
+                ], check=True)
+                logger.info("Cyan successfully installed via pipx")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error installing cyan: {e}")
+                sys.exit(1)
+        elif check_command("pip3") or check_command("pip"):
+            pip_cmd = "pip3" if check_command("pip3") else "pip"
+            
+            try:
+                logger.debug("Installing setuptools...")
+                subprocess.run([
+                    pip_cmd, "install", "--user", "--break-system-packages", "setuptools"
+                ], check=True)
+                
+                logger.debug("Installing pyzule-rw...")
+                subprocess.run([
+                    pip_cmd, "install", "--user", "--break-system-packages",
+                    "https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip"
+                ], check=True)
+                logger.info("Cyan successfully installed via pip")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error installing cyan: {e}")
+                sys.exit(1)
+        else:
+            logger.error("Neither pipx nor pip found. Install Python3 and pip/pipx")
+            sys.exit(1)
+        
+        user_bin = Path.home() / ".local" / "bin"
+        if str(user_bin) not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{user_bin}:{os.environ.get('PATH', '')}"
 
 def setup_workspace():
     try:
@@ -97,10 +184,12 @@ def run_cmd(cmd, cwd=None):
         result = subprocess.run(cmd, cwd=cwd, capture_output=True, shell=isinstance(cmd, str))
         if result.returncode != 0:
             logger.error(result.stderr.decode(errors='ignore'))
+            logger.error(result.stdout.decode(errors='ignore'))
             raise Exception("Command failed")
         return result.stdout.decode()
     except Exception as e:
         logger.error(e)
+        raise
 
 def download_file(url, dest):
     try:
@@ -202,13 +291,19 @@ def download_safari_extension():
         if appex_path.exists():
             copy_folder_no_chmod(appex_path, target_path)
         else:
-            raise Exception("OpenYoutubeSafariExtension.appex non trovato dopo il clone!")
+            raise Exception("OpenYoutubeSafariExtension.appex not found after cloning!")
     except Exception as e:
         logger.error(e)
 
 def main():
     os.system('clear' if os.name == 'posix' else 'cls')
     print("=== ModMyuTube ===")
+    
+    system = check_os()
+    logger.info(f"Detected operating system: {system}")
+    
+    install_dependencies()
+    
     setup_workspace()
 
     logger.info("Please select the original YouTube IPA file")
@@ -241,10 +336,19 @@ def main():
 
     logger.debug("Building IPA file")
     cmd_inject = f"cyan -i modmyutube/youtube.ipa -o YouTubePlus_{tweak_version}.ipa -uwef {tweaks_str} -n \"{display_name}\" -b {bundle_id}"
-    run_cmd(cmd_inject)
+    try:
+        run_cmd(cmd_inject)
+    except Exception:
+        logger.error("Error creating IPA file")
+        return
+
+    output_ipa = Path.cwd() / f"YouTubePlus_{tweak_version}.ipa"
+    if not output_ipa.exists():
+        logger.error(f"File {output_ipa.name} not found after build")
+        return
 
     print()
-    logger.info(f"IPA builded in YouTubePlus_{tweak_version}.ipa")
+    logger.info(f"IPA successfully created: {output_ipa.name}")
     logger.warning('When opening YouTube ignore "Incompatible Tweaks Detected" by selecting "Dont Show for This Version" and "I Accept All Risks".')
 
 if __name__ == "__main__":
