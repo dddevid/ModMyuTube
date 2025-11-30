@@ -15,7 +15,6 @@ The script decompresses the original YouTube IPA file, applies the mods, and the
 ## Supported Operating Systems
 - ✅ Linux
 - ✅ macOS
-- ❌ Windows (not supported)
 
 > [!WARNING]  
 > Windows is **not supported**. If you want to use the script on Windows you should install WSL (Windows Subsystem for Linux) and run the script from there.
